@@ -120,6 +120,14 @@ typedef struct _procman_deputy {
     sys_cpu_mem_t cpu_time[2];
     float cpu_load;
 
+    // track number of prints in last
+    // 2 half-windows; make sure it doesn't
+    // exceed 100 prints.
+    int32_t should_throttle_prints;
+    uint16_t prints_in_half_window[2];
+    float print_window_size;
+    int64_t last_print_time;
+
     int verbose;
     int exiting;
 
@@ -165,6 +173,20 @@ on_scheduled_respawn(procman_cmd_t *cmd);
 static void
 transmit_str (procman_deputy_t *pmd, int sid, char * str)
 {
+    if (pmd->should_throttle_prints) {
+      int64_t now = timestamp_now();
+      if (now - pmd->last_print_time > (1000000/2*(pmd->print_window_size))) {
+        pmd->last_print_time = now;
+        pmd->prints_in_half_window[1] = pmd->prints_in_half_window[0];
+        pmd->prints_in_half_window[0] = 1;
+      } else {
+        pmd->prints_in_half_window[0] = pmd->prints_in_half_window[0] + 1;
+      }
+      if (pmd->prints_in_half_window[0] + pmd->prints_in_half_window[1] > 100) {
+        return;
+      }
+    }
+
     bot_procman_printf_t msg;
     msg.deputy_name = pmd->hostname;
     msg.sheriff_id = sid;
@@ -175,6 +197,20 @@ transmit_str (procman_deputy_t *pmd, int sid, char * str)
 
 static void
 printf_and_transmit (procman_deputy_t *pmd, int sid, char *fmt, ...) {
+    if (pmd->should_throttle_prints) {
+      int64_t now = timestamp_now();
+      if (now - pmd->last_print_time > (1000000/2*(pmd->print_window_size))) {
+        pmd->last_print_time = now;
+        pmd->prints_in_half_window[1] = pmd->prints_in_half_window[0];
+        pmd->prints_in_half_window[0] = 1;
+      } else {
+        pmd->prints_in_half_window[0] = pmd->prints_in_half_window[0] + 1;
+      }
+      if (pmd->prints_in_half_window[0] + pmd->prints_in_half_window[1] > 100) {
+        return;
+      }
+    }
+
     int len;
     char buf[256];
     va_list ap;
@@ -1225,6 +1261,11 @@ int main (int argc, char **argv)
      memset (pmd, 0, sizeof (procman_deputy_t));
      pmd->lcm = lcm;
      pmd->verbose = verbose;
+     pmd->should_throttle_prints = 1;
+     pmd->prints_in_half_window[0]=0;
+     pmd->prints_in_half_window[1]=0;
+     pmd->print_window_size = 1.0;
+     pmd->last_print_time = timestamp_now();
      pmd->norders_slm = 0;
      pmd->nstale_orders_slm = 0;
      pmd->norders_forme_slm = 0;
